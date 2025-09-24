@@ -1,4 +1,3 @@
-// Metodos para el hasheo no reversible de contraseñas
 import bcrypt from "bcrypt";
 
 const DEFAULT_COST = Number(process.env.BCRYPT_COST ?? 12);
