@@ -52,12 +52,18 @@ class AuthService {
     const template = `
       <html>
         <body>
-          <h1>Hello ${user.first_name} ${user.last_name}</h1>
-          <p>Click <a href="${link}">here</a> to activate your account.</p>
+          <h1>Hello <%= first_name %> <%= last_name %></h1>
+          <p>Click <a href="<%= link %>">here</a> to activate your account.</p>
         </body>
       </html>`;
-    const htmlBody = ejs.render(template);
 
+
+    //const htmlBody = ejs.render(template);
+    const htmlBody = ejs.render(template, {
+      first_name: user.first_name,
+      last_name: user.last_name,
+      link
+    });
     await transporter.sendMail({
       from: "info@example.com",
       to: user.email,
