@@ -3,7 +3,7 @@ import InvoiceService from '../services/invoiceService';
 import { Invoice } from '../types/invoice';
 
 //funcion para evitar repetir la comprobación de userId en cada función
-function checkInvoiceOwnership(invoice: Invoice, userId: number) {
+function checkInvoiceOwnership(invoice: Invoice, userId: string) {
   if (invoice.userId !== userId) {
     const err = new Error('Prohibido, no deberías poder acceder al recurso');
     (err as any).status = 403;
