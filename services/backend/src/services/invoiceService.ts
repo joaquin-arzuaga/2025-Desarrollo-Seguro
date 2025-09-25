@@ -14,19 +14,30 @@ interface InvoiceRow {
 }
 
 class InvoiceService {
-  static async list( userId: string, status?: string, operator?: string): Promise<Invoice[]> {
-    let q = db<InvoiceRow>('invoices').where({ userId: userId });
-    if (status) q = q.andWhereRaw(" status "+ operator + " '"+ status +"'");
-    const rows = await q.select();
-    const invoices = rows.map(row => ({
-      id: row.id,
-      userId: row.userId,
-      amount: row.amount,
-      dueDate: row.dueDate,
-      status: row.status} as Invoice
-    ));
-    return invoices;
+  static async list(userId: string, status?: string, operator?: string): Promise<Invoice[]> {
+  let q = db<InvoiceRow>('invoices').where({ userId: userId });
+
+  // mitigación de inyección SQL usando bindings en vez de concatenación
+  if (status) {
+    // solo permitimos operadores validos para no inyectar SQL
+    const validOperators = ['=', '<>', '>', '<', '>=', '<='];
+    const op = validOperators.includes(operator || '') ? operator : '=';
+    q = q.andWhere('status', op as any, status);
   }
+
+  const rows = await q.select();
+
+  const invoices = rows.map(row => ({
+    id: row.id,
+    userId: row.userId,
+    amount: row.amount,
+    dueDate: row.dueDate,
+    status: row.status
+  } as Invoice));
+
+  return invoices;
+}
+
 
   static async setPaymentCard(
     userId: string,
