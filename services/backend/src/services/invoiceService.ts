@@ -14,19 +14,30 @@ interface InvoiceRow {
 }
 
 class InvoiceService {
-  static async list( userId: string, status?: string, operator?: string): Promise<Invoice[]> {
-    let q = db<InvoiceRow>('invoices').where({ userId: userId });
-    if (status) q = q.andWhereRaw(" status "+ operator + " '"+ status +"'");
-    const rows = await q.select();
-    const invoices = rows.map(row => ({
-      id: row.id,
-      userId: row.userId,
-      amount: row.amount,
-      dueDate: row.dueDate,
-      status: row.status} as Invoice
-    ));
-    return invoices;
+  static async list(userId: string, status?: string, operator?: string): Promise<Invoice[]> {
+  let q = db<InvoiceRow>('invoices').where({ userId: userId });
+
+  // mitigación de inyección SQL usando bindings en vez de concatenación
+  if (status) {
+    // solo permitimos operadores validos para no inyectar SQL
+    const validOperators = ['=', '<>', '>', '<', '>=', '<='];
+    const op = validOperators.includes(operator || '') ? operator : '=';
+    q = q.andWhere('status', op as any, status);
   }
+
+  const rows = await q.select();
+
+  const invoices = rows.map(row => ({
+    id: row.id,
+    userId: row.userId,
+    amount: row.amount,
+    dueDate: row.dueDate,
+    status: row.status
+  } as Invoice));
+
+  return invoices;
+}
+
 
   static async setPaymentCard(
     userId: string,
@@ -39,6 +50,10 @@ class InvoiceService {
     // use axios to call http://paymentBrand/payments as a POST request
     // with the body containing ccNumber, ccv, expirationDate
     // and handle the response accordingly
+      const allowedBrands = ['visa', 'mastercard', 'amex'];
+    if (!allowedBrands.includes(paymentBrand)) {
+      return "Invalid payment brand";
+    }
     const paymentResponse = await axios.post(`http://${paymentBrand}/payments`, {
       ccNumber,
       ccv,
@@ -63,26 +78,30 @@ class InvoiceService {
 
 
   static async getReceipt(
-    invoiceId: string,
-    pdfName: string
-  ) {
-    // check if the invoice exists
-    const invoice = await db<InvoiceRow>('invoices').where({ id: invoiceId }).first();
-    if (!invoice) {
-      throw new Error('Invoice not found');
-    }
-    try {
-      const filePath = `/invoices/${pdfName}`;
-      const content = await fs.readFile(filePath, 'utf-8');
-      return content;
-    } catch (error) {
-      // send the error to the standard output
-      console.error('Error reading receipt file:', error);
-      throw new Error('Receipt not found');
-
-    } 
-
-  };
+        invoiceId: string,
+        pdfName: string
+      ) {
+        // check if the invoice exists
+        const invoice = await db<InvoiceRow>('invoices').where({ id: invoiceId }).first();
+        if (!invoice) {
+          throw new Error('Invoice not found');
+        }
+    
+        if (!/^[\w\-\.]+\.pdf$/.test(pdfName)) {
+          throw new Error('Invalid file name');
+        }
+    
+        const invoicesDir = path.resolve('/invoices');
+        const filePath = path.join(invoicesDir, pdfName);
+    
+        try {
+          const content = await fs.readFile(filePath, 'utf-8');
+          return content;
+        } catch (error) {
+          console.error('Error reading receipt file:', error);
+          throw new Error('Receipt not found');
+        }
+      }
 
 };
 

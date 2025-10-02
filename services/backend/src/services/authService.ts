@@ -2,9 +2,10 @@
 import crypto from 'crypto';
 import nodemailer from 'nodemailer';
 import db from '../db';
-import { User,UserRow } from '../types/user';
+import { User, UserRow } from '../types/user';
 import jwtUtils from '../utils/jwt';
 import ejs from 'ejs';
+import { hash, verifyHash} from '../utils/hash';
 
 const RESET_TTL = 1000 * 60 * 60;         // 1h
 const INVITE_TTL = 1000 * 60 * 60 * 24 * 7; // 7d
@@ -17,46 +18,59 @@ class AuthService {
       .orWhere({ email: user.email })
       .first();
     if (existing) throw new Error('User already exists with that username or email');
+
     // create invite token
     const invite_token = crypto.randomBytes(6).toString('hex');
     const invite_token_expires = new Date(Date.now() + INVITE_TTL);
+
+    const hashed = await hash(user.password);
+
     await db<UserRow>('users')
       .insert({
         username: user.username,
-        password: user.password,
+        password: hashed,
         email: user.email,
         first_name: user.first_name,
-        last_name:  user.last_name,
+        last_name: user.last_name,
         invite_token,
         invite_token_expires,
         activated: false
       });
-      // send invite email using nodemailer and local SMTP server
+
+    // send invite email using nodemailer and local SMTP server
     const transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST,
-      port: parseInt(process.env.SMTP_PORT),
+      port: parseInt(process.env.SMTP_PORT as string, 10),
       auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS
       }
     });
+
     const link = `${process.env.FRONTEND_URL}/activate-user?token=${invite_token}&username=${user.username}`;
-   
+
     const template = `
       <html>
         <body>
-          <h1>Hello ${user.first_name} ${user.last_name}</h1>
-          <p>Click <a href="${ link }">here</a> to activate your account.</p>
+          <h1>Hello <%= first_name %> <%= last_name %></h1>
+          <p>Click <a href="<%= link %>">here</a> to activate your account.</p>
         </body>
       </html>`;
-    const htmlBody = ejs.render(template);
-    
+
+
+    //const htmlBody = ejs.render(template);
+    const htmlBody = ejs.render(template, {
+      first_name: user.first_name,
+      last_name: user.last_name,
+      link
+    });
     await transporter.sendMail({
       from: "info@example.com",
       to: user.email,
       subject: 'Activate your account',
       html: htmlBody
     });
+    // no return (mismo comportamiento)
   }
 
   static async updateUser(user: User) {
@@ -64,15 +78,23 @@ class AuthService {
       .where({ id: user.id })
       .first();
     if (!existing) throw new Error('User not found');
+
+    const updateData: Partial<UserRow> = {
+      username: user.username,
+      email: user.email,
+      first_name: user.first_name,
+      last_name: user.last_name
+    } as any;
+
+    // si viene una password la hasheamos
+    if (user.password) {
+      updateData.password = await hash(user.password) as any;
+    }
+
     await db<UserRow>('users')
       .where({ id: user.id })
-      .update({
-        username: user.username,
-        password: user.password,
-        email: user.email,
-        first_name: user.first_name,
-        last_name: user.last_name
-      });
+      .update(updateData);
+
     return existing;
   }
 
@@ -82,7 +104,11 @@ class AuthService {
       .andWhere('activated', true)
       .first();
     if (!user) throw new Error('Invalid email or not activated');
-    if (password != user.password) throw new Error('Invalid password');
+
+    // verificar contraseña con el hash guardado
+    const ok = await verifyHash(password, (user as any).password);
+    if (!ok) throw new Error('Error al iniciar sesion');
+
     return user;
   }
 
@@ -106,7 +132,7 @@ class AuthService {
     // send email with reset link using nodemailer and local SMTP server
     const transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST,
-      port: parseInt(process.env.SMTP_PORT || '587'),
+      port: parseInt(process.env.SMTP_PORT || '587', 10),
       auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS
@@ -121,17 +147,19 @@ class AuthService {
     });
   }
 
-  static async resetPassword(token: string, newPassword: string) {
+   static async resetPassword(token: string, newPassword: string) {
     const row = await db<UserRow>('users')
       .where('reset_password_token', token)
       .andWhere('reset_password_expires', '>', new Date())
       .first();
     if (!row) throw new Error('Invalid or expired reset token');
 
+    const hashed = await hash(newPassword);
+
     await db('users')
       .where({ id: row.id })
       .update({
-        password: newPassword,
+        password: hashed,
         reset_password_token: null,
         reset_password_expires: null
       });
@@ -144,9 +172,11 @@ class AuthService {
       .first();
     if (!row) throw new Error('Invalid or expired invite token');
 
+    const hashed = await hash(newPassword);
+
     await db('users')
       .update({
-        password: newPassword,
+        password: hashed,
         invite_token: null,
         invite_token_expires: null
       })
