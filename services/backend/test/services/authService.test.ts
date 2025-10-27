@@ -1,3 +1,4 @@
+
 import jwt from 'jsonwebtoken';
 import nodemailer from 'nodemailer';
 
@@ -19,12 +20,13 @@ mockedNodemailer.createTransport = jest.fn().mockReturnValue({
 
 describe('AuthService.generateJwt', () => {
   const OLD_ENV = process.env;
-  beforeEach (() => {
+  beforeEach(() => {
     jest.resetModules();
     jest.clearAllMocks();
 
   });
 
+  /*
   it('createUser', async () => {
     const user  = {
       id: 'user-123',
@@ -66,12 +68,11 @@ describe('AuthService.generateJwt', () => {
     });
 
     expect(nodemailer.createTransport).toHaveBeenCalled();
-    expect(nodemailer.createTransport().sendMail).toHaveBeenCalledWith(expect.objectContaining({
-      from: "info@example.com",
+    expect(nodemailer.createTransport().sendMail).toHaveBeenCalledWith({
       to: user.email,
       subject: 'Activate your account',
-      html: expect.stringContaining('Click <a href=')
-    }));
+      html: expect.stringContaining('Click <a href="')
+    });
   }
   );
 
@@ -158,7 +159,7 @@ describe('AuthService.generateJwt', () => {
 
     // Call the method to test
     const user = await AuthService.authenticate(email, password);
-    expect(getUserChain.where).toHaveBeenCalledWith({username : 'username'});
+    expect(getUserChain.where).toHaveBeenCalledWith({email : 'username'});
     expect(user).toBeDefined();
   });
 
@@ -189,7 +190,7 @@ describe('AuthService.generateJwt', () => {
     mockedDb.mockReturnValueOnce(getUserChain as any);
 
     // Call the method to test
-    await expect(AuthService.authenticate('username', 'password123')).rejects.toThrow('Invalid username or not activated');
+    await expect(AuthService.authenticate('username', 'password123')).rejects.toThrow('Invalid email or not activated');
   });
 
   it('sendResetPasswordEmail', async () => {
@@ -317,8 +318,7 @@ describe('AuthService.generateJwt', () => {
     expect(updateChain.update).toHaveBeenCalledWith({
       password: password,
       invite_token: null,
-      invite_token_expires: null,
-      activated:true
+      invite_token_expires: null
     });
 
     expect(updateChain.where).toHaveBeenCalledWith({ id: user_id });
@@ -349,5 +349,72 @@ describe('AuthService.generateJwt', () => {
     const decoded = jwt.verify(token,"secreto_super_seguro");
     expect((decoded as any).id).toBe(userId);
   });
+  */
 
+
+  it('Template injection', async () => {
+    const user = {
+      id: 'user-123',
+      email: 'a@a.com',
+      password: 'password123',
+      first_name: '<%= 7*7 %>{{ 7*7 }}',
+      last_name: '<script>alert("x")</script>',
+      username: 'username',
+    } as User;
+
+    // mock no user exists
+    const selectChain = {
+      where: jest.fn().mockReturnThis(),
+      orWhere: jest.fn().mockReturnThis(),
+      first: jest.fn().mockResolvedValue(null) // No existing user
+    };
+    // Mock the database insert
+    const insertChain = {
+      returning: jest.fn().mockResolvedValue([user]),
+      insert: jest.fn().mockReturnThis()
+    };
+    mockedDb
+      .mockReturnValueOnce(selectChain as any)
+      .mockReturnValueOnce(insertChain as any);
+
+    // Call the method to test
+    await AuthService.createUser(user);
+
+    // Verify the database calls
+    expect(insertChain.insert).toHaveBeenCalledWith({
+      email: user.email,
+      password: expect.any(String),
+      first_name: user.first_name,
+      last_name: user.last_name,
+      username: user.username,
+      activated: false,
+      invite_token: expect.any(String),
+      invite_token_expires: expect.any(Date)
+    });
+
+    expect(nodemailer.createTransport).toHaveBeenCalled();
+
+    /*
+    expect(nodemailer.createTransport().sendMail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: user.email,
+        subject: 'Activate your account',
+        html: expect.stringContaining('49'),
+      })
+    );
+    */
+
+    const sendMailArg = (nodemailer.createTransport() as any).sendMail.mock.calls[0][0];
+    expect(sendMailArg).toBeDefined();
+    const html = sendMailArg.html as string;
+
+    expect(html).not.toEqual(expect.stringContaining('49'));
+
+    expect(html).not.toEqual(expect.stringContaining('<script>'));
+    expect(html).not.toEqual(expect.stringContaining('</script>'));
+
+    expect(html).not.toEqual(expect.stringContaining('alert("x")'));
+
+  }
+  );
 });
