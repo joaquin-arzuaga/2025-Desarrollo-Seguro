@@ -3,13 +3,12 @@ import urllib.parse
 import pytest
 import requests
 
-# Reutilizamos directamente la fixture definida en test_security.py
-# (asegúrate de que test_security.py esté en el path de tests para que python lo importe)
+
 from test_security import setup_create_user
 
 API_BASE = "http://localhost:5000"
 
-# Payloads clásicos de SQLi (puedes añadir variantes)
+
 SQLI_PAYLOADS = [
     "' OR '1'='1",
     "\" OR \"1\"=\"1",
