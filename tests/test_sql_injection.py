@@ -1,59 +1,117 @@
-# tests/test_invoices_sql_injection.py
-import urllib.parse
 import pytest
+import random
 import requests
+import quopri
+import re
+from requests.utils import unquote
 
+# crear token
+MAILHOG_API = "http://localhost:8025/api/v2/messages"
 
-from test_security import setup_create_user
+def get_last_email_body():
+    resp = requests.get(MAILHOG_API)
+    resp.raise_for_status()
+    data = resp.json()
 
-API_BASE = "http://localhost:5000"
+    if not data["items"]:
+        return None  # no emails received yet
 
+    last_email = data["items"][0]
+    body = last_email["Content"]["Body"]
+    decoded = quopri.decodestring(body).decode("utf-8", errors="replace")
+    return unquote(decoded)
 
-SQLI_PAYLOADS = [
+def extract_links(decoded_html):
+    return re.findall(r'<a\s+href=["\']([^"\']+)["\']', decoded_html, re.IGNORECASE)[0]
+
+def extract_query_params(url):
+    # regex: busca ?token= o &token= seguido de cualquier cosa hasta &, # o fin de string
+    patron = re.compile(r"(?:[?&])token=([^&#]+)")
+    m = patron.search(url)
+    return m.group(1) if m else None
+
+@pytest.fixture(scope="module")
+def create_and_login_user():
+    # random username
+    i = random.randint(1000, 999999)
+    username = f'user{i}'
+    email = f'{username}@test.com'
+    password = 'password'
+
+    salida = requests.post("http://localhost:5000/users",
+                        data={
+                            "username": username,
+                            "password": password,
+                            "email": email,
+                            "first_name": "Name",
+                            "last_name": f'{username}son'
+                        })
+    # user created
+    assert salida.status_code == 201
+
+    mail = get_last_email_body()
+    link = extract_links(mail)
+    token = extract_query_params(link)
+
+    # activate user
+    resp = requests.post("http://localhost:5000/auth/set-password", json={"token": token, "newPassword": password})
+
+    # login y obtencion de token auth
+    resp2 = requests.post("http://localhost:5000/auth/login", json={"username": username, "password": password})
+
+    auth_token = resp2.json().get("token")
+
+    return {"username": username, "password": password, "token": auth_token}
+
+def get_invoices_count(auth_token, status_param=None, operator=None):
+    headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else {}
+    params = {}
+    if status_param is not None:
+        params["status"] = status_param
+    if operator is not None:
+        params["operator"] = operator
+    resp = requests.get("http://localhost:5000/invoices", headers=headers, params=params)
+    resp.raise_for_status()
+    data = resp.json()
+    if not isinstance(data, list):
+        raise AssertionError("Respuesta /invoices no es una lista JSON")
+    return len(data), data
+
+# payloads
+PAYLOADS = [
     "' OR '1'='1",
-    "\" OR \"1\"=\"1",
-    "1 OR 1=1",
+    "' OR 1=1 -- ",
+    "\" OR \"\" = \"",
+    "' OR 'a'='a",
+    "' OR '1'='1' -- ",
+    "' OR '1'='1' /*",
+    "' OR ''='"
 ]
 
-@pytest.fixture
-def auth_token(setup_create_user):
+@pytest.mark.parametrize("payload", PAYLOADS)
+def test_sql_injection_attempt_parametrized(create_and_login_user, payload):
     """
-    Reutiliza la fixture setup_create_user (de test_security).
-    Luego hace login y devuelve el token para autorizar las requests en los tests.
-    """
-    username, password = setup_create_user[0], setup_create_user[1]
-    r = requests.post(f"{API_BASE}/auth/login", json={"username": username, "password": password})
-    r.raise_for_status()
-    return r.json()["token"]
+    Test parametrizado que compara el número de filas devueltas por:
+    1) un estado improbable (baseline)
+    2) el mismo parámetro status usando distintos payloads de SQLi
 
-def _headers(token):
-    """Helper para construir el header Authorization igual que en el estilo del repo."""
-    return {"Authorization": f"Bearer {token}"}
-
-@pytest.mark.parametrize("raw", SQLI_PAYLOADS)
-def test_invoices_id_path_sqli(auth_token, raw):
+    Si count_payload > count_baseline -> posible SQLi (fallo del test).
     """
-    Intenta GET /invoices/{id} con payloads de inyección SQL.
-    El test pasa si la API NO devuelve 200 ni 500 para una carga maliciosa.
-    """
-    encoded = urllib.parse.quote(raw, safe="")
-    url = f"{API_BASE}/invoices/{encoded}"
-    resp = requests.get(url, headers=_headers(auth_token))
+    token = create_and_login_user["token"]
 
-    assert resp.status_code not in (200, 500), (
-        f"Respuesta insegura: {resp.status_code} para payload {raw!r} en path"
-    )
+    # respuesta con un parametro que no existe
+    rare_status = "status_does_not_exist_12345"
+    # obtiene el numero de "elemetnos" que contiene la respuesta (0)
+    count_baseline, baseline_data = get_invoices_count(token, status_param=rare_status)
 
-@pytest.mark.parametrize("param_name", ["id", "invoiceId", "q", "search", "filter"])
-@pytest.mark.parametrize("raw", SQLI_PAYLOADS)
-def test_invoices_query_sqli(auth_token, param_name, raw):
-    """
-    Intenta GET /invoices?{param} con un payload para detectar concatenaciones inseguras
-    en la construcción de consultas (ej: andWhereRaw con strings concatenados).
-    """
-    params = {param_name: raw}
-    resp = requests.get(f"{API_BASE}/invoices", params=params, headers=_headers(auth_token))
+    # respuesta con payload
+    payload_encoded = payload
+    # obtiene el numero de elementos que contiene la respuesta con el payload 
+    count_payload, payload_data = get_invoices_count(token, status_param=payload_encoded)
 
-    assert resp.status_code not in (200, 500), (
-        f"Endpoint /invoices aceptó payload sospechoso con {param_name}={raw!r} (status {resp.status_code})"
+    # si la app es vulnerable entonces count_payload > count_baseline
+    assert count_payload == count_baseline, (
+        "Posible SQL Injection detectado con payload: {!r}. "
+        "La consulta con payload devolvió un número distinto de filas que la baseline. "
+        f"baseline={count_baseline}, payload={count_payload}"
     )
