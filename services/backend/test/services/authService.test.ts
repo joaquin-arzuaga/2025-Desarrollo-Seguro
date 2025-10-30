@@ -1,10 +1,3 @@
-/**
- * @fileoverview
- * Test unitario para AuthService.createUser que verifica la seguridad frente a inyecciones de plantilla
- * en los campos del usuario, además de validar el correcto envío de correo
- * de invitación mediante nodemailer.
- */
-
 
 import jwt from 'jsonwebtoken';
 import nodemailer from 'nodemailer';
