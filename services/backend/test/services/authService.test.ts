@@ -1,3 +1,10 @@
+/**
+ * @fileoverview
+ * Test unitario para AuthService.createUser que verifica la seguridad frente a inyecciones de plantilla
+ * en los campos del usuario, además de validar el correcto envío de correo
+ * de invitación mediante nodemailer.
+ */
+
 
 import jwt from 'jsonwebtoken';
 import nodemailer from 'nodemailer';
@@ -26,6 +33,16 @@ describe('AuthService.templateInjection', () => {
     jest.clearAllMocks();
 
   });
+
+  /**
+   * Template Injection
+   * --------------------------------------------------------------
+   * Este test verifica que el servicio de creación de usuario:
+   *  1. Escape correctamente las plantillas y scripts maliciosos en los campos de usuario.
+   *  2. No refleje expresiones de evaluación (como `<%=7*7%>`, `{{7*7}}`, `${7*7}`, etc.) en los correos enviados.
+   *  
+   * Se simula la creación de un usuario con payloads de prueba que intentan inyectar código o plantillas.
+   */
 
   it('Template injection', async () => {
 
