@@ -91,11 +91,11 @@ PAYLOADS = [
 @pytest.mark.parametrize("payload", PAYLOADS)
 def test_sql_injection_attempt_parametrized(create_and_login_user, payload):
     """
-    Test parametrizado que compara el número de filas devueltas por:
+    Test parametrizado que compara el numero de filas devueltas por:
     1) un estado improbable (baseline)
-    2) el mismo parámetro status usando distintos payloads de SQLi
+    2) el mismo parametro status usando distintos payloads de SQLi
 
-    Si count_payload > count_baseline -> posible SQLi (fallo del test).
+    Si count_payload > count_baseline -> posible SQLi.
     """
     token = create_and_login_user["token"]
 
