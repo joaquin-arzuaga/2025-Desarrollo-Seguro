@@ -25,7 +25,15 @@ describe('AuthService.generateJwt', () => {
     jest.clearAllMocks();
 
   });
-
+  /**
+   * Template Injection
+   * --------------------------------------------------------------
+   * Este test verifica que el servicio de creación de usuario:
+   *  1. Escape correctamente las plantillas y scripts maliciosos en los campos de usuario.
+   *  2. No refleje expresiones de evaluación (como `<%=7*7%>`, `{{7*7}}`, `${7*7}`, etc.) en los correos enviados.
+   *  
+   * Se simula la creación de un usuario con payloads de prueba que intentan inyectar código o plantillas.
+   */
   it('Template injection', async () => {
 
     const payloads = [
